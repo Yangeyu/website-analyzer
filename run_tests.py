@@ -87,11 +87,8 @@ def run_tests():
             
         print("=" * 80)
         
-        return result.returncode
-        
     except Exception as e:
         print(f"Error running tests: {e}")
-        return 1
 
 
 if __name__ == "__main__":

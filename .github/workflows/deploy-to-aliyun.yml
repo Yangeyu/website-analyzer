@@ -62,18 +62,15 @@ jobs:
       - name: Build Docker image
         run: docker build -t ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }} .
           
-      - name: Tag Docker images
+      - name: Tag Docker image
         run: |
           docker tag ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }} ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
-          docker tag ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }} ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/${{ env.IMAGE_NAME }}:latest
           
-      - name: Push Docker images
+      - name: Push Docker image
         run: |
           docker push ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
-          docker push ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/${{ env.IMAGE_NAME }}:latest
           
       - name: Image push summary
         run: |
           echo "✅ 镜像已成功推送:"
-          echo "  - ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}"
-          echo "  - ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/${{ env.IMAGE_NAME }}:latest" 
+          echo "  - ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}" 

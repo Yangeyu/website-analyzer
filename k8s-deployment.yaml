@@ -1,0 +1,94 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: website-analyzer
+  labels:
+    app: website-analyzer
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: website-analyzer
+  template:
+    metadata:
+      labels:
+        app: website-analyzer
+    spec:
+      containers:
+      - name: website-analyzer
+        image: registry.cn-hangzhou.aliyuncs.com/your-namespace/website-analyzer:latest
+        ports:
+        - containerPort: 8000
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        env:
+        - name: LLM_PROVIDER
+          valueFrom:
+            configMapKeyRef:
+              name: website-analyzer-config
+              key: LLM_PROVIDER
+        - name: LLM_MODEL
+          valueFrom:
+            configMapKeyRef:
+              name: website-analyzer-config
+              key: LLM_MODEL
+        - name: LLM_BASE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: website-analyzer-config
+              key: LLM_BASE_URL
+        - name: LLM_TEMPERATURE
+          valueFrom:
+            configMapKeyRef:
+              name: website-analyzer-config
+              key: LLM_TEMPERATURE
+        - name: DEFAULT_CRAWL_DELAY
+          valueFrom:
+            configMapKeyRef:
+              name: website-analyzer-config
+              key: DEFAULT_CRAWL_DELAY
+        - name: DEFAULT_USER_AGENT
+          valueFrom:
+            configMapKeyRef:
+              name: website-analyzer-config
+              key: DEFAULT_USER_AGENT
+        - name: LLM_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: website-analyzer-secrets
+              key: LLM_API_KEY
+        volumeMounts:
+        - name: data-volume
+          mountPath: /app/data
+      volumes:
+      - name: data-volume
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: website-analyzer
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 8000
+  selector:
+    app: website-analyzer
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: website-analyzer-config
+data:
+  LLM_PROVIDER: "openai"
+  LLM_MODEL: "openai/qwen-max"
+  LLM_BASE_URL: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  LLM_TEMPERATURE: "0.0"
+  DEFAULT_CRAWL_DELAY: "1.0"
+  DEFAULT_USER_AGENT: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36" 

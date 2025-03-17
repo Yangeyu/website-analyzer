@@ -1,46 +1,120 @@
-name: Deploy to Aliyun
+name: Website Analyzer CI/CD
 
 on:
   push:
-    branches: [ main ]
-  workflow_dispatch:
+    branches: [ main, master ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+  workflow_dispatch:  # 允许手动触发
+
+env:
+  REGISTRY: registry.cn-hangzhou.aliyuncs.com
+  NAMESPACE: yang-git
+  IMAGE_NAME: web-analyzer
+  DOCKER_USERNAME: aliy6537
 
 jobs:
-  deploy:
+  build-test-deploy:
+    name: Build, Test and Deploy
     runs-on: ubuntu-latest
     steps:
-      - name: Deploy to Aliyun server
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+      
+      - name: Generate version tag
+        id: version
+        run: |
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-8)
+          VERSION_TAG="${SHORT_SHA}-$(date +%Y%m%d%H%M)"
+          echo "version=${VERSION_TAG}" >> $GITHUB_OUTPUT
+          echo "构建版本: $VERSION_TAG"
+          
+      - name: Login to Aliyun Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ env.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+          
+      - name: Build and Push Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
+            ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/${{ env.IMAGE_NAME }}:latest
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.NAMESPACE }}/${{ env.IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.NAMESPACE }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
+          
+      - name: Run tests in container
+        run: |
+          docker run --rm ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/${{ env.IMAGE_NAME }}:latest python run_tests.py
+          
+      - name: Deploy to Server
         uses: appleboy/ssh-action@master
         with:
           host: 120.26.248.32
           username: root
           key: ${{ secrets.ALIYUN_SSH_PRIVATE_KEY }}
+          envs: REGISTRY,NAMESPACE,IMAGE_NAME,DOCKER_USERNAME
+          script_stop: true
           script: |
-            # Create work directory if it doesn't exist
-            mkdir -p /root/website-analyzer
-
-            # Navigate to work directory
-            cd /root/website-analyzer
-
-            # If repo exists, pull latest changes, otherwise clone it
-            if [ -d ".git" ]; then
-              git pull
-            else
-              git clone https://github.com/Yangeyu/website-analyzer.git .
-            fi
-
-            # Build the Docker image
-            docker build -t website-analyzer .
-
-            # Stop and remove any existing container with the same name
-            docker stop website-analyzer-container || true
-            docker rm website-analyzer-container || true
-
-            # Run the Docker container
-            docker run -d --name website-analyzer-container \
-              -p 8000:8000 \
-              --restart unless-stopped \
-              website-analyzer
+            echo "开始部署服务..."
+            # 登录到阿里云容器镜像仓库
+            echo "${{ secrets.DOCKER_PASSWORD }}" | docker login ${{ env.REGISTRY }} --username ${{ env.DOCKER_USERNAME }} --password-stdin
             
-            # Check if the container is running
-            docker ps | grep website-analyzer-container
+            # 拉取最新镜像(带超时设置)
+            timeout 120s docker pull ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/${{ env.IMAGE_NAME }}:latest
+            
+            # 优化容器更新流程
+            CONTAINER_NAME="web-analyzer-container"
+            if [ "$(docker ps -q -f name=$CONTAINER_NAME)" ]; then
+              echo "更新已有容器..."
+              # 创建临时容器
+              docker run -d --name ${CONTAINER_NAME}-new \
+                --restart always \
+                -p 8001:8000 \
+                ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/${{ env.IMAGE_NAME }}:latest
+                
+              # 等待新容器启动
+              sleep 5
+              
+              # 检查新容器健康状态
+              if curl -s http://localhost:8001/hello | grep -q "hello"; then
+                echo "新容器启动成功，切换流量..."
+                # 停止和移除旧容器
+                docker stop $CONTAINER_NAME
+                docker rm $CONTAINER_NAME
+                
+                # 停止新容器并以正确名称重启
+                docker stop ${CONTAINER_NAME}-new
+                docker rename ${CONTAINER_NAME}-new $CONTAINER_NAME
+                docker start $CONTAINER_NAME
+                
+                # 更新端口映射
+                docker update --restart always -p 80:8000 $CONTAINER_NAME
+              else
+                echo "新容器启动失败，回滚..."
+                docker stop ${CONTAINER_NAME}-new
+                docker rm ${CONTAINER_NAME}-new
+                exit 1
+              fi
+            else
+              echo "首次部署容器..."
+              # 直接部署新容器
+              docker run -d \
+                --name $CONTAINER_NAME \
+                --restart always \
+                -p 80:8000 \
+                ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/${{ env.IMAGE_NAME }}:latest
+            fi
+            
+            # 清理未使用的镜像（保留最近三个版本）
+            docker image ls ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/${{ env.IMAGE_NAME }} --format "{{.ID}}" | tail -n +4 | xargs -r docker image rm
+            
+            echo "✅ 部署完成" 
